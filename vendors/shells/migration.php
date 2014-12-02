@@ -54,6 +54,8 @@ class MigrationShell extends Shell {
      * @access protected
      */
     public $_schemaTable = 'schema_migrations';
+    
+    public $_allPlugins = false;
 
     /**
      * Schema structure
@@ -112,9 +114,8 @@ class MigrationShell extends Shell {
         $this->_paramsParsing();
 
         $this->_startDBConfig();
-        $this->_readPathInfo();
 
-        if (empty($this->_versions)) {
+        /*if (empty($this->_versions)) {
             $last = __d('migrations', 'Nothing installed.', true);
         } else {
             $last = end($this->_versions);
@@ -135,7 +136,7 @@ class MigrationShell extends Shell {
         $this->out(String::insert(
                         __d('migrations', 'Last migration installed: :date', true), array('date' => $last)
         ));
-        $this->hr();
+        $this->hr();*/
     }
 
     /**
@@ -145,17 +146,33 @@ class MigrationShell extends Shell {
      * @access protected
      */
     public function _paramsParsing() {
+        
         if (empty($this->params['path'])) {
-            $this->path = APP_PATH . 'config' . DS . 'sql' . DS . 'migrations';
+            $this->path = $this->getPath();
         } else {
             $this->path = rtrim($this->params['path'], DS);
         }
+        
         if (!empty($this->params['connection'])) {
             $this->connection = $this->params['connection'];
         }
-        if (preg_match("/[\/\\\]plugins[\/\\\]([^\/]+)[\/\\\]vendors[\/\\\]shells[\/\\\]migration\.php$/", $this->Dispatch->shellPath, $matches)) {
-            $this->_pluginName = Inflector::camelize($matches[1]);
+        
+        if (!empty($this->params['p'])) {
+            $this->_pluginName = Inflector::camelize($this->params['p']);
+            $this->path = $this->getPath($this->params['p']);
         }
+        
+        if (!empty($this->params['all'])) {
+            $this->_allPlugins = true;
+        }
+    }
+    
+    private function getPath($plugin = null){
+        if(empty($plugin)){
+            return $this->path = APP_PATH . 'config' . DS . 'sql' . DS . 'migrations';
+        }
+        
+        return APP_PATH . 'plugins' . DS . Inflector::underscore($plugin) . DS . 'config' . DS . 'sql' . DS . 'migrations';
     }
 
     /**
@@ -183,7 +200,47 @@ class MigrationShell extends Shell {
             $this->__checkTable(); // If exist, check the structure
         }
         $this->SchemaMigration = new Model(array('name' => 'SchemaMigration', 'table' => $this->_schemaTable, 'ds' => $this->connection));
-        $this->_versions = $this->SchemaMigration->find('all', array('order' => array('SchemaMigration.version' => 'ASC')));
+        
+        $this->_versions = $this->_getVersions($this->_pluginName);
+    }
+    
+    
+    private function _getVersions($plugin = null){
+        $options = array('order' => array('SchemaMigration.version' => 'ASC'));
+        
+        if(empty($plugin)){
+            $options['conditions'][] = 'SchemaMigration.plugin IS NULL OR SchemaMigration.plugin = ""';
+        }else{
+            $options['conditions']['SchemaMigration.plugin'] = $plugin;
+        }
+        
+        return $this->SchemaMigration->find('all', $options);
+    }
+    
+    public function getPlugins(){
+        
+        //app
+        $plugins = [null];
+        
+        $onlyApp = empty($this->_pluginName) && !$this->_allPlugins;
+        if($onlyApp){
+            return $plugins;
+        }
+        
+        //only some plugin
+        if(!empty($this->_pluginName)){
+            return [$this->_pluginName];
+        }
+        
+        
+        //all plugins and app
+        App::import('Core', 'Folder');
+        $folder = new Folder(APP_PATH . 'plugins');
+        foreach($folder->read()[0] as $plugin){
+            $plugins[] = Inflector::camelize($plugin);
+        }
+        
+        return $plugins;
     }
 
     /**
@@ -213,21 +270,37 @@ class MigrationShell extends Shell {
         } else {
             $date = time(); // Now...
         }
-        foreach ($this->_filesInfo as $fileInfo) {
-            if ($fileInfo['timestamp'] > $this->lastVersion && $fileInfo['timestamp'] <= $date) {
-                $this->out(String::insert(__d('migrations', 'Executing file :file...', true), array('file' => basename($fileInfo['file']))));
-                if (!$this->_exec('install', $fileInfo['file'], $fileInfo['classname'])) {
-                    $this->err(String::insert(__d('migrations', 'Can not be execute :class (:date).', true), array('class' => Inflector::camelize($fileInfo['classname']), 'date' => date(__d('migrations', 'm/d/Y H:i:s', true), $fileInfo['timestamp']))));
-                    return false;
+        
+        $plugins = $this->getPlugins();
+        
+        foreach($plugins as $plugin){
+            
+            $filesInfo = $this->_getFilesInfo($this->getPath($plugin));
+            $this->lastVersion = 0;
+            $this->_versions = $this->_getVersions($plugin);
+            
+            if(!empty($this->_versions)){
+                $last = end($this->_versions);
+                $this->lastVersion = $last['SchemaMigration']['version'];
+            }
+
+            foreach ($filesInfo as $fileInfo) {
+                if ($fileInfo['timestamp'] > $this->lastVersion && $fileInfo['timestamp'] <= $date) {
+                    $this->out(String::insert(__d('migrations', 'Executing file :file...', true), array('file' => basename($fileInfo['file']))));
+                    if (!$this->_exec('install', $fileInfo['file'], $fileInfo['classname'])) {
+                        $this->err(String::insert(__d('migrations', 'Can not be execute :class (:date).', true), array('class' => Inflector::camelize($fileInfo['classname']), 'date' => date(__d('migrations', 'm/d/Y H:i:s', true), $fileInfo['timestamp']))));
+                        return false;
+                    }
+                    $this->SchemaMigration->create();
+                    $this->SchemaMigration->save(array(
+                        'SchemaMigration' => array(
+                            'version' => $fileInfo['timestamp'],
+                            'classname' => $fileInfo['classname'],
+                            'plugin' => $plugin,
+                            'created' => time()
+                        )
+                    ));
                 }
-                $this->SchemaMigration->create();
-                $this->SchemaMigration->save(array(
-                    'SchemaMigration' => array(
-                        'version' => $fileInfo['timestamp'],
-                        'classname' => $fileInfo['classname'],
-                        'created' => time()
-                    )
-                ));
             }
         }
         return __d('migrations', 'All updated.', true) . "\n";
@@ -241,52 +314,71 @@ class MigrationShell extends Shell {
      * @access public
      */
     public function down($all = false) {
-        if ($this->lastVersion == 0) {
-            return __d('migration', 'No version installed.', true) . "\n";
-        }
-        if ($all === true) {
-            $date = 0; // Minimal date
-        } else {
-            if (!isset($this->args[0])) {
-                $this->err(__d('migrations', 'Date is needed or input "last" to revert the last up.', true));
-                return false;
+        
+        $plugins = $this->getPlugins();
+        
+        foreach($plugins as $plugin){
+            
+            $this->lastVersion = 0;
+            $this->_versions = $this->_getVersions($plugin);
+            
+            if (empty($this->_versions)) {
+                $last = __d('migrations', 'Nothing installed on ' . $plugin, true);
+            }else{
+                $last = end($this->_versions);
+                $this->lastVersion = $last['SchemaMigration']['version'];
             }
-            $date = $this->args[0];
-            if (!ctype_digit($date) || strlen($date) !== 14) {
-                if ($date !== 'last') {
-                    $this->err(__d('migrations', 'Date must be in format YYYYMMDDHHMMSS.', true));
-                    return false;
-                }
-                $date = $this->lastVersion - 1;
+            
+            if ($this->lastVersion == 0) {
+                $this->out(__d('migration', 'No version installed on ' . (empty($plugin) ? 'app' : $plugin), true) . "\n");
+                continue;
+            }
+            
+            if ($all === true) {
+                $date = 0; // Minimal date
             } else {
-                $date = $this->_dateToTimestamp($date);
-            }
-        }
-        end($this->_versions); // Reverse execute
-        while (true) {
-            $cur = current($this->_versions);
-            if ($cur['SchemaMigration']['version'] > $date) {
-                $this->out(
-                        String::insert(__d('migrations', 'Executing down of :migration (:date)...', true), array(
-                            'migration' => $cur['SchemaMigration']['classname'],
-                            'date' => date(__d('migrations', 'm/d/Y H:i:s', true), $cur['SchemaMigration']['version'])
-                                )
-                        )
-                );
-                $className = Inflector::underscore(preg_replace('/Migration$/', '', $cur['SchemaMigration']['classname']));
-                $file = $this->path . DS . date('YmdHis', $cur['SchemaMigration']['version']) . '_' . $className . '.php';
-                if (!$this->_exec('uninstall', $file, $cur['SchemaMigration']['classname'])) {
-                    $this->err(__d('migrations', 'Error in down.', true));
+                if (!isset($this->args[0])) {
+                    $this->err(__d('migrations', 'Date is needed or input "last" to revert the last up.', true));
                     return false;
                 }
-                $this->SchemaMigration->delete($cur['SchemaMigration']['id']);
-                if (prev($this->_versions)) {
-                    continue;
+                $date = $this->args[0];
+                if (!ctype_digit($date) || strlen($date) !== 14) {
+                    if ($date !== 'last') {
+                        $this->err(__d('migrations', 'Date must be in format YYYYMMDDHHMMSS.', true));
+                        return false;
+                    }
+                    $date = $this->lastVersion - 1;
+                } else {
+                    $date = $this->_dateToTimestamp($date);
                 }
             }
-            break;
+            end($this->_versions); // Reverse execute
+            while (true) {
+                $cur = current($this->_versions);
+                if ($cur['SchemaMigration']['version'] > $date) {
+                    $this->out(
+                            String::insert(__d('migrations', 'Executing down of :migration (:date)...', true), array(
+                                'migration' => $cur['SchemaMigration']['classname'],
+                                'date' => date(__d('migrations', 'm/d/Y H:i:s', true), $cur['SchemaMigration']['version'])
+                                    )
+                            )
+                    );
+                    $className = Inflector::underscore(preg_replace('/Migration$/', '', $cur['SchemaMigration']['classname']));
+                    $file = $this->getPath($plugin) . DS . date('YmdHis', $cur['SchemaMigration']['version']) . '_' . $className . '.php';
+                    if (!$this->_exec('uninstall', $file, $cur['SchemaMigration']['classname'])) {
+                        $this->err(__d('migrations', 'Error in down.', true));
+                        return false;
+                    }
+                    $this->SchemaMigration->delete($cur['SchemaMigration']['id']);
+                    if (prev($this->_versions)) {
+                        continue;
+                    }
+                }
+                break;
+            }
         }
         return __d('migrations', 'All down.', true) . "\n";
+        
     }
 
     /**
@@ -298,7 +390,7 @@ class MigrationShell extends Shell {
     public function reset() {
         if ($this->down(true)) {
             if (isset($this->params['force'])) {
-                App::import('Vendor', $this->_pluginName . '.Migration');
+                App::import('Vendor', 'Migrations.Migration');
                 $migration = new Migration($this);
 
                 $tables = $this->db->listSources();
@@ -381,9 +473,9 @@ class MigrationShell extends Shell {
      * @return void
      * @access protected
      */
-    public function _readPathInfo() {
+    private function _getFilesInfo($path){
         App::import('Core', 'Folder');
-        $folder = new Folder($this->path);
+        $folder = new Folder($path);
         if (!$folder) {
             $this->err(__d('migrations', 'Specified path does not exist.', true));
             $this->out(String::insert(
@@ -400,13 +492,12 @@ class MigrationShell extends Shell {
                 continue;
             }
             $filesInfo[] = array(
-                'file' => $this->path . DS . $file,
+                'file' => $path . DS . $file,
                 'timestamp' => $this->_dateToTimestamp($matches[1]),
                 'classname' => Inflector::camelize($matches[2] . 'Migration')
             );
         }
-        $this->_filesInfo = $filesInfo;
-        //$this->_filesInfo = Set::sort($filesInfo, '/timestamp', 'asc');
+        return $filesInfo;
     }
 
     /**
@@ -423,12 +514,18 @@ class MigrationShell extends Shell {
             $this->err(String::insert(__d('migrations', 'File ":file" can not be read. Check if exists or have privileges for your user.', true), array('file' => $filename)));
             return false;
         }
-        App::import('Vendor', $this->_pluginName . '.Migration'); // To not need include in migration file
+        
+        App::import('Vendor', 'Migrations.Migration'); // To not need include in migration file
+        
+        if(!empty($this->_pluginName)){
+            App::import('Vendor', $this->_pluginName . '.AppMigration');
+        }
+        
         if (!class_exists('AppMigration')) {
             if (file_exists(APP_PATH . 'app_migration.php')) {
                 include APP_PATH . 'app_migration.php';
             } else {
-                App::import('Vendor', $this->_pluginName . '.AppMigration');
+                App::import('Vendor', 'Migrations.AppMigration');
             }
         }
         include $filename;
@@ -514,7 +611,11 @@ class MigrationShell extends Shell {
 		set db config <config>. Uses 'default' if none is specified.
 	-path <dir>
 		path <dir> to read and write migrations scripts.
-		default path: :path", true), array('path' => $this->params['working'] . DS . 'config' . DS . 'sql' . DS . 'migrations')));
+		default path: :path", true), array('path' => $this->params['working'] . DS . 'config' . DS . 'sql' . DS . 'migrations') . " 
+        -p <plugin> Executa os metodos somente em determinado plugin"
+                
+                
+        ));
 
         $this->out(__d('migrations', "Commands:
 	migration help
