@@ -42,16 +42,7 @@ class AppMigrations extends Migrations {
 
 You can use the following functions (the style will be described shortly):
 
-* createTable: Create a table;
-* changeTable: alter a table (under construction);
-* dropTable: Remove a table;
-* renameTable: Renaming a table;
-* addColumn: Add a new column in a table;
-* removeColumn: Remove a column of the table;
-* changeColumn: Change the type of a column;
-* renameColumn: Rename a column;
-* addIndex: Create a new index (under construction);
-* removeIndex: Remove an index (under construction);
+* run: Run a SQL;
 
 
 Besides these methods, each migration can have its own callbacks, as in: @beforeCreateTable@, @afterCreateTable@, @beforeDropTable@, ... Besides these callbacks, you can also implement @beforeInstall@, @afterInstall@, @beforeUninstall@ and @afterUninstall@. In any of these callbacks, you can return false if there is an interruption in the migration that is in progress.
@@ -148,7 +139,7 @@ bc. <?php
  Ou seja: Created on 28/02/2009 18:16:15 with a classname of AddUserTable (the name of the class should be the camelized form of the name of the file).
 */
 class AddUserTable extends AppMigrations {
-    function up() {
+    public function up() {
         $this->createTable('users', array(
             'name' => 'string',
             'pass' => 'string',
@@ -156,7 +147,7 @@ class AddUserTable extends AppMigrations {
         ));
         // Do Not need to specify created or modified
     }
-    function down() {
+    public function down() {
         $this->dropTable('users');
     }
 }
@@ -171,8 +162,8 @@ bc. <?php
  Class AddUserTable
 */
 class AddUserTable extends AppMigrations {
-    var $uses = array('Profile');
-    function up() {
+    public $uses = array('Profile');
+    public function up() {
         $this->createTable('users',array(
             'pass' => 'string',
             'email' => array('type' => 'string', 'lenght' => '100')
@@ -187,7 +178,7 @@ class AddUserTable extends AppMigrations {
             $user->save();
         }
     }
-    function down() {
+    public function down() {
         $this->dropTable('users');
     }
 }

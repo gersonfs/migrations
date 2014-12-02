@@ -1,4 +1,5 @@
 <?php
+
 /**
  * AppMigration that migrations extends
  *
@@ -13,19 +14,21 @@
  * AppMigration
  */
 class AppMigration extends Migration {
-/**
- * List of models to use
- *
- * @var array
- * @access public
- */
-	var $uses = array();
-/**
- * Stop on error
- *
- * @var boolean
- * @access public
- */
-	var $stopOnError = true;
+
+    /**
+     * List of models to use
+     *
+     * @var array
+     * @access public
+     */
+    public $uses = array();
+
+    /**
+     * Stop on error
+     *
+     * @var boolean
+     * @access public
+     */
+    public $stopOnError = true;
+
 }
-?>
