@@ -66,9 +66,9 @@ class Migration {
     /**
      * Constructor
      */
-    public function __construct(&$shell = null) {
-        $this->_shell = & $shell;
-        $this->_db = & $shell->db;
+    public function __construct($shell = null) {
+        $this->_shell = $shell;
+        $this->_db = $shell->db;
         $this->__fakeSchema = new CakeSchema();
 
         $uses = $this->_getUses();
